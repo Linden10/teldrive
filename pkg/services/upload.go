@@ -16,7 +16,6 @@ import (
 	"github.com/tgdrive/teldrive/internal/auth"
 	"github.com/tgdrive/teldrive/internal/crypt"
 	"github.com/tgdrive/teldrive/internal/logging"
-	"github.com/tgdrive/teldrive/internal/pool"
 	"github.com/tgdrive/teldrive/internal/tgc"
 	"go.uber.org/zap"
 
@@ -141,9 +140,26 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 		tgc.WithRetry(a.cnf.TG.Uploads.MaxRetries),
 		tgc.WithRateLimit())
 
-	uploadPool := pool.NewPool(client, int64(a.cnf.TG.PoolSize), middlewares...)
+	// Use pool manager to reuse Pools per token (or per auth user).
+	var poolKey string
+	if token != "" {
+		poolKey = token
+	} else {
+		poolKey = "auth:" + strconv.FormatInt(userId, 10)
+	}
 
-	defer uploadPool.Close()
+	uploadPool, uploadClient, err := a.poolManager.Get(ctx, poolKey, func() (*telegram.Client, error) {
+		// factory: return the same client that was being used before
+		if token != "" {
+			return tgc.BotClient(ctx, a.db, a.cache, &a.cnf.TG, token)
+		}
+		return tgc.AuthClient(ctx, &a.cnf.TG, auth.GetJWTUser(ctx).TgSession)
+	}, middlewares...)
+	if err != nil {
+		return nil, err
+	}
+	// prefer uploadClient (from cache) as client used by RunWithAuth
+	client = uploadClient
 
 	logger := logging.FromContext(ctx)
 
@@ -179,7 +195,7 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 			}
 		}
 
-		client := uploadPool.Default(ctx)
+	client := uploadPool.Default(ctx)
 
 		u := uploader.NewUploader(client).WithThreads(a.cnf.TG.Uploads.Threads).WithPartSize(512 * 1024)
 

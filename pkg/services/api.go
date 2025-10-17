@@ -14,6 +14,7 @@ import (
 	"github.com/tgdrive/teldrive/internal/api"
 	"github.com/tgdrive/teldrive/internal/auth"
 	"github.com/tgdrive/teldrive/internal/cache"
+	"github.com/tgdrive/teldrive/internal/pool"
 	"github.com/tgdrive/teldrive/internal/config"
 	"github.com/tgdrive/teldrive/internal/events"
 	"github.com/tgdrive/teldrive/internal/logging"
@@ -32,6 +33,7 @@ type apiService struct {
 	middlewares    []telegram.Middleware
 	events         *events.Recorder
 	channelManager *tgc.ChannelManager
+	poolManager    *pool.Manager
 }
 
 func (a *apiService) VersionVersion(ctx context.Context) (*api.ApiVersion, error) {
@@ -93,6 +95,7 @@ func NewApiService(db *gorm.DB,
 	worker *tgc.BotWorker,
 	events *events.Recorder) *apiService {
 	middlewares := tgc.NewMiddleware(&cnf.TG, tgc.WithFloodWait(), tgc.WithRateLimit())
+	poolManager := pool.NewManager(int64(cnf.TG.PoolSize), middlewares)
 	return &apiService{
 		db:             db,
 		cnf:            cnf,
@@ -101,6 +104,7 @@ func NewApiService(db *gorm.DB,
 		middlewares:    middlewares,
 		events:         events,
 		channelManager: tgc.NewChannelManager(db, cache, &cnf.TG, middlewares),
+		poolManager:    poolManager,
 	}
 }
 
